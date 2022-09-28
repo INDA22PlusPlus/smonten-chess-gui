@@ -1,6 +1,8 @@
 //! The simplest possible example that does something.
 #![allow(clippy::unnecessary_wraps)]
 
+use std::path::Path; // needet to import images
+
 const WIDTH: f32 = 1600.0;
 const HEIGHT: f32 = 1600.0;
 
@@ -60,15 +62,15 @@ impl event::EventHandler<ggez::GameError> for MainState {
                         false => Color::BLACK,
                     },
                 )?;
-
                 canvas.draw(&rect, Vec2::new(0.0, 0.0));
                 w = !w;
 
             }
             w = !w;
         }
-
-        
+        // let mouse_in_window = ggez::input::mouse::get_grabbed(_ctx);
+        let im = graphics::Image::from_path(ctx, Path::new("./img/pawn.png"), true);
+        // canvas.draw(&im, param)
 
         // canvas.draw(&self.circle, Vec2::new(self.pos_x, 380.0));
 
