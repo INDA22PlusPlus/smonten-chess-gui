@@ -6,4 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-chess = { git = "https://github.com/INDA22PlusPlus/antmag-chess/src/lib" }
+test_crate = { git = "https://github.com/INDA22PlusPlus/antmag-chess" }
+ggez = "0.8.0-rc0"
+glam = { version = "0.20", features = ["mint"] }
