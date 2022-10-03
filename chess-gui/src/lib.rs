@@ -43,7 +43,7 @@ pub mod chess_api{
         pub king_pos : [(usize, usize); 2],
     }
 
-    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub enum Cell{
         King,
         Queen,
@@ -54,7 +54,7 @@ pub mod chess_api{
         None
     }
 
-    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub enum Move_type{
         Peassant,
         Castling,
@@ -63,7 +63,7 @@ pub mod chess_api{
         Move
     }
 
-    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub struct Move{
         pub from : (i32, i32),
         pub to : (i32, i32),
@@ -84,7 +84,7 @@ pub mod chess_api{
                 _board_color : [[false; 8]; 8],
 
                 threat_buff : [[[false; 8]; 8]; 2],
-                turn : false,
+                turn : true,//false,
                 castling : [false; 2],
                 king_pos : [(0,0); 2]
             };
