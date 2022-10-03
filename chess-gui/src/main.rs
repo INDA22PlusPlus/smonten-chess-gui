@@ -33,19 +33,6 @@ impl MainState {
     fn new(ctx: &mut Context, assets: Assets) -> GameResult<MainState> {
         Ok(MainState { board: create_game(), cur_selected_xy: SelectedXY::None, assets: assets})
     }
-    // fn new(ctx: &mut Context) -> GameResult<MainState> {
-    //     let circle = graphics::Mesh::new_circle(
-    //         ctx,
-    //         graphics::DrawMode::fill(),
-    //         vec2(0., 0.),
-    //         100.0,
-    //         2.0,
-    //         Color::WHITE,
-    //     )?;
-        
-
-    //     Ok(MainState { pos_x: 0.0, circle })
-    // }
 }
 
 struct Assets {
@@ -169,7 +156,6 @@ impl event::EventHandler<ggez::GameError> for MainState {
                     }
                 }
             }
-            
         }
         Ok(())
     }
@@ -189,16 +175,7 @@ impl event::EventHandler<ggez::GameError> for MainState {
         // ! GET MOUSE
 
 
-
         // DRAWING BOARD AS IMAGE
-        // let scale_xy = WIDTH/1168.0;
-        // let image1 = graphics::Image::from_path(ctx, "/board.png", true)?;
-        // let drawparams = graphics::DrawParam::new()
-        // .dest([0.0, 0.0])
-        // .rotation(0.0)
-        // .offset([0.0, 0.0])
-        // .scale([scale_xy, scale_xy]);
-        // canvas.draw(&image1, drawparams);
         canvas.draw(&self.assets.board_img, self.assets.board_drawparam);
         // ! DRAWING BOARD AS IMAGE
 
@@ -279,25 +256,6 @@ impl event::EventHandler<ggez::GameError> for MainState {
                 
 
                 // DRAWING PIECE
-                
-                // let cell: Cell = self.board._board_types[7-_y][_x];
-                // let is_black = self.board._board_color[7-_y][_x];
-                // let path = get_path(cell, is_black);
-
-                
-                // match cell {
-                //     Cell::None => (),
-                //     _ => {
-                //         let scale_xy = (WIDTH*0.125)/75.0;
-                //         let image1 = graphics::Image::from_path(ctx, path, true)?;
-                //         let drawparams = graphics::DrawParam::new()
-                //         .dest([x*s, y*s])
-                //         .rotation(0.0)
-                //         .offset([0.0, 0.0])
-                //         .scale([scale_xy, scale_xy]);
-                //         canvas.draw(&image1, drawparams);
-                //     },
-                // }
 
                 let square = self.board.get_square_xy((_x, _y));
                 let scale_xy = (WIDTH*0.125)/75.0;
@@ -312,32 +270,10 @@ impl event::EventHandler<ggez::GameError> for MainState {
                         let piece_img = self.assets.get_image(p);
                         canvas.draw(piece_img, drawparams);
                     },
-                }
-
-
-                // let cell: Cell = self.board._board_types[_y][_x];
-                // let is_black = self.board._board_color[_y][_x];
-                // let scale_xy = (WIDTH*0.125)/75.0;
-                // let drawparams = graphics::DrawParam::new()
-                //         .dest([x*s, y*s])
-                //         .rotation(0.0)
-                //         .offset([0.0, 0.0])
-                //         .scale([scale_xy, scale_xy]);
-                // match cell {
-                //     Cell::None => (),
-                //     p => {
-                //         let piece_img = self.assets.get_image(p, is_black);
-                //         canvas.draw(piece_img, drawparams);
-
-                //     }
-                // }
-                
+                }                
                 // ! DRAWING PIECE
-                
-
 
                 w = !w;
-
             }
             w = !w;
         }
