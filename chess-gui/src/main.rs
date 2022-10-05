@@ -61,24 +61,24 @@ impl MainState {
         // SETTING UP ASSETS
         let scale_xy_board = WIDTH/1168.0;
         let mut assets = Assets {
-            board_img: graphics::Image::from_path(ctx, "/board.png", true)?,
+            board_img: graphics::Image::from_path(ctx, "/board.png")?,
             board_drawparam: graphics::DrawParam::new()
             .dest([0.0, 0.0])
             .rotation(0.0)
             .offset([0.0, 0.0])
             .scale([scale_xy_board, scale_xy_board]),
-            b_pawn_img: graphics::Image::from_path(ctx, "/b_pawn.png", true)?,
-            b_rook_img: graphics::Image::from_path(ctx, "/b_rook.png", true)?,
-            b_knight_img: graphics::Image::from_path(ctx, "/b_knight.png", true)?,
-            b_bishop_img: graphics::Image::from_path(ctx, "/b_bishop.png", true)?,
-            b_queen_img: graphics::Image::from_path(ctx, "/b_queen.png", true)?,
-            b_king_img: graphics::Image::from_path(ctx, "/b_king.png", true)?,
-            w_pawn_img: graphics::Image::from_path(ctx, "/w_pawn.png", true)?,
-            w_rook_img: graphics::Image::from_path(ctx, "/w_rook.png", true)?,
-            w_knight_img: graphics::Image::from_path(ctx, "/w_knight.png", true)?,
-            w_bishop_img: graphics::Image::from_path(ctx, "/w_bishop.png", true)?,
-            w_queen_img: graphics::Image::from_path(ctx, "/w_queen.png", true)?,
-            w_king_img: graphics::Image::from_path(ctx, "/w_king.png", true)?,
+            b_pawn_img: graphics::Image::from_path(ctx, "/b_pawn.png")?,
+            b_rook_img: graphics::Image::from_path(ctx, "/b_rook.png")?,
+            b_knight_img: graphics::Image::from_path(ctx, "/b_knight.png")?,
+            b_bishop_img: graphics::Image::from_path(ctx, "/b_bishop.png")?,
+            b_queen_img: graphics::Image::from_path(ctx, "/b_queen.png")?,
+            b_king_img: graphics::Image::from_path(ctx, "/b_king.png")?,
+            w_pawn_img: graphics::Image::from_path(ctx, "/w_pawn.png")?,
+            w_rook_img: graphics::Image::from_path(ctx, "/w_rook.png")?,
+            w_knight_img: graphics::Image::from_path(ctx, "/w_knight.png")?,
+            w_bishop_img: graphics::Image::from_path(ctx, "/w_bishop.png")?,
+            w_queen_img: graphics::Image::from_path(ctx, "/w_queen.png")?,
+            w_king_img: graphics::Image::from_path(ctx, "/w_king.png")?,
         };
         // ! SETTING UP ASSETS
 
