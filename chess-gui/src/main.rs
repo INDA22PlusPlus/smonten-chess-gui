@@ -53,7 +53,7 @@ struct MainState {
     state: State,
     // Networking
     stream: TcpStream,
-    client: bool,
+    role: Role,
 }
 
 impl MainState {
@@ -125,9 +125,26 @@ impl MainState {
                     State::Playing
                 },
             stream: stream,
-            client: client,
+            role: match client {
+                true => Role::Client,
+                false => Role::Server,
+            },
 
         })
+    }
+
+    fn network_connect(&mut self) {
+        match self.role {
+            Role::Server => {
+
+            },
+            Role::Client => {
+                // CLIENT IS TRYING TO CONNECT
+                // let cr = networking::C2sConnectRequest {
+
+                // };
+            }
+        }
     }
 
 
@@ -142,22 +159,83 @@ impl MainState {
     //         },
     //     }
     // }
-    fn send_move_packet(&mut self, from: (usize, usize), to: (usize, usize), promotion: Option<networking::Piece>) {
+    fn send_move_packet_c2s(&mut self, from: (usize, usize), to: (usize, usize), promotion: Option<networking::Piece>) {
+        let prom_to_send = match promotion {
+            None => {
+                None
+            },
+            Some(p) => {
+                Some(p as i32)
+            }
+        };
         let m = networking::Move {
             from_square: self.xy_to_square(from),
             to_square: self.xy_to_square(to),
-            promotion: Some(promotion.unwrap() as i32),
+            promotion: prom_to_send,
+        };
+
+        let msg = networking::C2sMessage {
+            msg: Some(c2s_message::Msg::Move(m)),
         };
         
 
         // let mut buf: [u8; 512] = [0_u8; 512];
-        let packet = m.encode_to_vec();
+        let packet = msg.encode_to_vec();
         self.stream.write(&packet);
     }
 
+    // server receving packet
+    fn recieve_packet_c2s(&mut self) {
+        let mut buf: [u8; 512] = [0_u8; 512];
+        let buf_len = match self.stream.read(&mut buf) {
+            Ok(l) => l,
+            Err(e) => 0,
+        };
+
+        let raw_msg = networking::C2sMessage::decode(&buf[..buf_len]).expect("read went wrong");
+        match raw_msg.msg {
+            None => (),
+            Some(msg) => {
+                match msg {
+                    networking::c2s_message::Msg::Move(msg_m) => {
+                        let from = self.square_to_xy(msg_m.from_square);
+                        let to = self.square_to_xy(msg_m.to_square);
+                        let promotion = msg_m.promotion;
+
+                        match self.board.get_destinations(from) {
+                            Destinations::None => {
+                                self.bad_move_s2c();
+                            },
+                            Destinations::Exists(d) => {
+                                if d.contains(&to) {
+                                    println!("server performing clients move");
+                                    self.board.move_from_to(from, to);
+
+                                    // UPDATING STATE
+                                    self.state = State::Playing;
+                                } else {
+                                    self.bad_move_s2c();
+                                }
+                            }
+                        }
+
+                    },
+                    networking::c2s_message::Msg::ConnectRequest(msg_cr) => {
+                        let id = msg_cr.game_id;
+                        let spectate = msg_cr.spectate;
+                    }
+                }
+            }
+        }
+    }
+
+    // client recieving packet
     fn recieve_packet_s2c(&mut self) {
         let mut buf: [u8; 512] = [0_u8; 512];
-        let buf_len = self.stream.read(&mut buf).unwrap();
+        let buf_len = match self.stream.read(&mut buf) {
+            Ok(l) => l,
+            Err(e) => 0,
+        };
 
         let raw_msg = networking::S2cMessage::decode(&buf[..buf_len]).expect("read went wrong");
         match raw_msg.msg {
@@ -165,28 +243,29 @@ impl MainState {
             Some(msg) => {
                 match msg {
                     s2c_message::Msg::Move(msg_m) => {
+                        println!("receving move from server now");
                         let from = self.square_to_xy(msg_m.from_square);
                         let to = self.square_to_xy(msg_m.to_square);
                         let promotion = msg_m.promotion;
 
-                        match self.board.get_destinations(from) {
-                            Destinations::Exists(d) => {
-                                if d.contains(&to) {
-                                    self.board.move_from_to(from, to);
-                                } else {
-                                    self.bad_move_s2c();
-                                }
-                            },
-                            Destinations::None => {
-                                self.bad_move_s2c();
-                            }
-                        }
+                        println!("now moving from square {} to {}", msg_m.from_square, msg_m.to_square);
+                        println!("now moving from {:?} to {:?}", from, to);
+                        self.board.move_from_to(from, to);
+                        println!("move done");
+
+                        // UPDATING STATE
+                        self.state = State::Playing;
+                        
                     },
-                    s2c_message::Msg::ConnectAck(msg_m) => {
-                        println!("got cennect ack")
+                    s2c_message::Msg::ConnectAck(msg_ca) => {
+                        let success = msg_ca.success;
+                        let id = msg_ca.game_id;
+                        let starting_pos = msg_ca.starting_position;
+                        let I_am_white = msg_ca.client_is_white;
                     },
-                    s2c_message::Msg::MoveAck(msg_m) => {
-                        println!("got move ack")
+                    s2c_message::Msg::MoveAck(msg_ma) => {
+                        let legal = msg_ma.legal;
+                        let board_state = msg_ma.board_result;
                     },
                     
                 }
@@ -194,6 +273,8 @@ impl MainState {
         }
         
     }
+
+    // server sending to client, client made bad move!
     fn bad_move_s2c(&self) {
         println!("client tried bad move");
         let ack = networking::S2cMoveAck {
@@ -210,7 +291,7 @@ impl MainState {
         (x, y)
     }
     pub fn xy_to_square(&self, xy: (usize, usize)) -> u32 {
-        (xy.0+xy.0*8) as u32
+        (xy.0+xy.1*8) as u32
     }
     // fn send_move_packet_C2s() {
     //     let mut buf: [u8; 512] = [0_u8; 512];
@@ -232,10 +313,6 @@ impl MainState {
         
         
     // }
-    fn send_move_packet_C2s() {
-        let mut buf: [u8; 512] = [0_u8; 512];
-
-    }
 
     // fn connect(&self) {
     //     let mut buf: [u8; 512] = [0_u8; 512];
@@ -254,6 +331,98 @@ impl MainState {
     //         .expect("Failed to send move packet");
     //     self.state = State::WaitingForOpponent;
     // }
+
+
+    fn update_mouse_select(&mut self, _ctx: &mut Context) {
+        let mpos = _ctx.mouse.position();
+        let mx = mpos.x;
+        let my = mpos.y;
+
+
+        if _ctx.mouse.button_pressed(ggez::input::mouse::MouseButton::Left) {
+            let new_sel_x = (8.0 * mx / WIDTH).floor() as usize;
+            let new_sel_y = (8.0 * my / HEIGHT).floor() as usize;
+            let new_sel_xy = (new_sel_x, new_sel_y);
+
+            
+            // let new_selected_is_black = self.board._board_color[new_sel_y][new_sel_x];
+            
+            let new_sel_square = self.board.get_square_xy(new_sel_xy);
+            match new_sel_square {
+                // PRESSED SQUARE IS EMPTY
+                Content::Empty => {
+                    
+                    match self.cur_selected_xy {
+                        // A SQUARE IS CURRENTLY SELECTED
+                        SelectedXY::Selected(cur_sel_xy) => {
+                            match self.board.get_destinations(cur_sel_xy) {
+                                // CAN WE EVEN MOVE THE PIECE HERE?
+                                Destinations::Exists(d) => {
+                                    if d.contains(&new_sel_xy) {
+                                        println!("to empty from playable piece, legal move. Shuld move!");
+                                        // THEN WE CAN MAKE OUR MOVE
+                                        self.board.move_from_to(cur_sel_xy, new_sel_xy);
+                                        // OBS HAS TO RESET SELCT
+                                        self.cur_selected_xy = SelectedXY::None;
+
+                                        // SEND MOVE NETWORKING
+                                        self.send_move_packet_c2s(cur_sel_xy, new_sel_xy, None);
+                                        // UPDATE STATE
+                                        self.state = State::WaitingForOpponent;
+                                    }
+                                },
+                                // CANT MOVE
+                                Destinations::None => (),
+                            }
+
+                        },
+                        // CANT SELECT EMPTY IF HAVN'T SELECTED PIECE
+                        SelectedXY::None => (),
+                    }
+                },
+                // PRESSED SQUARE IS OCCUPIED
+                Content::Occupied(new_sel_p) => {
+                    match self.cur_selected_xy {
+                        // A PIECE IS CURRENTLY SELECTED
+                        SelectedXY::Selected(cur_sel_xy) => {
+                            if self.board.get_turn() == new_sel_p.color {
+                                // SELECTED PIECE OF OWN COLOR -> RESELECT
+                                self.cur_selected_xy = SelectedXY::Selected(new_sel_xy);
+                            } else {
+                                match self.board.get_destinations(cur_sel_xy) {
+                                    Destinations::Exists(dests) => {
+                                        if dests.contains(&new_sel_xy) {
+                                            // SELECTED PIECE OF DIFFERENT COLOR -> KILL!
+                                            println!("kill!");
+                                            self.board.move_from_to(cur_sel_xy, new_sel_xy);
+                                            // OBS RESET SELECT
+                                            self.cur_selected_xy = SelectedXY::None;
+
+                                            // SEND MOVE NETWORKING
+                                            self.send_move_packet_c2s(cur_sel_xy, new_sel_xy, None);
+                                            // UPDATE STATE
+                                            self.state = State::WaitingForOpponent;
+
+                                        } else {
+                                            println!("attempted illigal move")
+                                        }
+                                    },
+                                    Destinations::None => (),
+                                }
+                            }
+                        },
+                        // CURRENTLY NO SELECTED SQUARE, THIS IS FIRST SELECT
+                        SelectedXY::None => {
+                            if self.board.coordinates_playable(new_sel_xy) {
+                                self.cur_selected_xy = SelectedXY::Selected(new_sel_xy);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    
+    }
 
 }
 
@@ -304,117 +473,32 @@ impl event::EventHandler<ggez::GameError> for MainState {
     fn update(&mut self, _ctx: &mut Context) -> GameResult {
 
         // NETWORKING
-        // match self.state {
-        //     State::Playing => {}
-        //     State::WaitingForOpponent => {
-        //         // If we recieved at move packet we first set the enemy pos to the recieved
-        //         // position and then set the state to playing
-        //         if let Some(pos) = self.recieve_move_packet() {
-        //             self.state = State::Playing;
-        //             // self.enemy_pos = pos;
-        //         }
-        //     }
-        // }
-        // ! NETWORKING
-
-
-
-
-
-
-        let mpos = _ctx.mouse.position();
-        let mx = mpos.x;
-        let my = mpos.y;
-
-
-        if _ctx.mouse.button_pressed(ggez::input::mouse::MouseButton::Left) {
-            let new_sel_x = (8.0 * mx / WIDTH).floor() as usize;
-            let new_sel_y = (8.0 * my / HEIGHT).floor() as usize;
-            let new_sel_xy = (new_sel_x, new_sel_y);
-
-            
-            // let new_selected_is_black = self.board._board_color[new_sel_y][new_sel_x];
-            
-            let new_sel_square = self.board.get_square_xy(new_sel_xy);
-            match new_sel_square {
-                // PRESSED SQUARE IS EMPTY
-                Content::Empty => {
-                    
-                    match self.cur_selected_xy {
-                        // A SQUARE IS CURRENTLY SELECTED
-                        SelectedXY::Selected(cur_sel_xy) => {
-                            match self.board.get_destinations(cur_sel_xy) {
-                                // CAN WE EVEN MOVE THE PIECE HERE?
-                                Destinations::Exists(d) => {
-                                    if d.contains(&new_sel_xy) {
-                                        println!("to empty from playable piece, legal move. Shuld move!");
-                                        // THEN WE CAN MAKE OUR MOVE
-                                        self.board.move_from_to(cur_sel_xy, new_sel_xy);
-                                        // OBS HAS TO RESET SELCT
-                                        self.cur_selected_xy = SelectedXY::None;
-
-                                        // SEND MOVE NETWORKING
-                                        // let move_to_send = networking::Move {
-                                        //     from_square: (cur_sel_xy.1*8 + cur_sel_xy.0) as u32,
-                                        //     to_square: (new_sel_xy.1*8 + new_sel_xy.0) as u32,
-                                        //     promotion: None,
-                                        // };
-                                        // self.send_move_packet(move_to_send);
-                                    }
-                                },
-                                // CANT MOVE
-                                Destinations::None => (),
-                            }
-
-                        },
-                        // CANT SELECT EMPTY IF HAVN'T SELECTED PIECE
-                        SelectedXY::None => (),
-                    }
-                },
-                // PRESSED SQUARE IS OCCUPIED
-                Content::Occupied(new_sel_p) => {
-                    match self.cur_selected_xy {
-                        // A PIECE IS CURRENTLY SELECTED
-                        SelectedXY::Selected(cur_sel_xy) => {
-                            if self.board.get_turn() == new_sel_p.color {
-                                // SELECTED PIECE OF OWN COLOR -> RESELECT
-                                self.cur_selected_xy = SelectedXY::Selected(new_sel_xy);
-                            } else {
-                                match self.board.get_destinations(cur_sel_xy) {
-                                    Destinations::Exists(dests) => {
-                                        if dests.contains(&new_sel_xy) {
-                                            // SELECTED PIECE OF DIFFERENT COLOR -> KILL!
-                                            println!("kill!");
-                                            self.board.move_from_to(cur_sel_xy, new_sel_xy);
-                                            // OBS RESET SELECT
-                                            self.cur_selected_xy = SelectedXY::None;
-
-                                            // SEND MOVE NETWORKING
-                                            // let move_to_send = networking::Move {
-                                            //     from_square: (cur_sel_xy.1*8 + cur_sel_xy.0) as u32,
-                                            //     to_square: (new_sel_xy.1*8 + new_sel_xy.0) as u32,
-                                            //     promotion: None,
-                                            // };
-                                            // self.send_move_packet(move_to_send);
-
-                                        } else {
-                                            println!("attempted illigal move")
-                                        }
-                                    },
-                                    Destinations::None => (),
-                                }
-                            }
-                        },
-                        // CURRENTLY NO SELECTED SQUARE, THIS IS FIRST SELECT
-                        SelectedXY::None => {
-                            if self.board.coordinates_playable(new_sel_xy) {
-                                self.cur_selected_xy = SelectedXY::Selected(new_sel_xy);
-                            }
-                        }
+        match self.state {
+            State::Playing => {
+                self.update_mouse_select(_ctx);
+            },
+            State::WaitingForOpponent => {
+                // If we recieved at move packet we first set the enemy pos to the recieved
+                // position and then set the state to playing
+                
+                match self.role {
+                    Role::Client => {
+                        self.recieve_packet_s2c();
+                    },
+                    Role::Server => {
+                        self.recieve_packet_c2s();
                     }
                 }
+                
+
+                // if let Some(pos) = self.recieve_move_packet() {
+                //     self.state = State::Playing;
+                //     // self.enemy_pos = pos;
+                // }
             }
         }
+        // ! NETWORKING
+
         Ok(())
     }
 
@@ -544,6 +628,7 @@ impl event::EventHandler<ggez::GameError> for MainState {
 }
 
 
+
 pub fn main() -> GameResult {
 
 
@@ -568,4 +653,9 @@ pub fn main() -> GameResult {
 enum SelectedXY {
     None,
     Selected((usize, usize)),
+}
+
+enum Role {
+    Server,
+    Client
 }
