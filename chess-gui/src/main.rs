@@ -3,11 +3,25 @@
 
 
 
+
 // LIB STUFF
 use chess_lib::{create_game, Destination, Color, PieceType};
 use chess_lib::Game;
 use chess_lib::*;
+use prost::Message;
 // ! LIB STUFF
+
+
+// NETWORKING LIB
+// use std::net::{TcpStream, TcpListener};
+use std::{
+    io::{Read, Write},
+    net::{TcpListener, TcpStream},
+};
+
+mod networking;
+use networking::*;
+// ! NETWORKING LIB
 
 
 
@@ -23,16 +37,224 @@ const WIDTH: f32 = 800.0;
 const HEIGHT: f32 = WIDTH;
 const SEL_COL: graphics::Color = graphics::Color::CYAN;
 
+
+
+#[derive(PartialEq)]
+enum State {
+    Playing,
+    WaitingForOpponent,
+}
+
 struct MainState {
     board: Game,
     cur_selected_xy: SelectedXY,
-    assets: Assets
+    assets: Assets,
+
+    state: State,
+    // Networking
+    stream: TcpStream,
+    client: bool,
 }
 
 impl MainState {
-    fn new(ctx: &mut Context, assets: Assets) -> GameResult<MainState> {
-        Ok(MainState { board: create_game(), cur_selected_xy: SelectedXY::None, assets: assets})
+    fn new(ctx: &mut Context) -> GameResult<MainState> {
+        // SETTING UP ASSETS
+        let scale_xy_board = WIDTH/1168.0;
+        let mut assets = Assets {
+            board_img: graphics::Image::from_path(ctx, "/board.png", true)?,
+            board_drawparam: graphics::DrawParam::new()
+            .dest([0.0, 0.0])
+            .rotation(0.0)
+            .offset([0.0, 0.0])
+            .scale([scale_xy_board, scale_xy_board]),
+            b_pawn_img: graphics::Image::from_path(ctx, "/b_pawn.png", true)?,
+            b_rook_img: graphics::Image::from_path(ctx, "/b_rook.png", true)?,
+            b_knight_img: graphics::Image::from_path(ctx, "/b_knight.png", true)?,
+            b_bishop_img: graphics::Image::from_path(ctx, "/b_bishop.png", true)?,
+            b_queen_img: graphics::Image::from_path(ctx, "/b_queen.png", true)?,
+            b_king_img: graphics::Image::from_path(ctx, "/b_king.png", true)?,
+            w_pawn_img: graphics::Image::from_path(ctx, "/w_pawn.png", true)?,
+            w_rook_img: graphics::Image::from_path(ctx, "/w_rook.png", true)?,
+            w_knight_img: graphics::Image::from_path(ctx, "/w_knight.png", true)?,
+            w_bishop_img: graphics::Image::from_path(ctx, "/w_bishop.png", true)?,
+            w_queen_img: graphics::Image::from_path(ctx, "/w_queen.png", true)?,
+            w_king_img: graphics::Image::from_path(ctx, "/w_king.png", true)?,
+        };
+        // ! SETTING UP ASSETS
+
+        let (stream, client) = {
+            let mut args = std::env::args();
+            // Skip path to program
+            let _ = args.next();
+
+            // Get first argument after path to program
+            let host_or_client = args
+                .next()
+                .expect("Expected arguments: --host or --client 'ip'");
+
+            match host_or_client.as_str() {
+                // If the program is running as host we listen on port 8080 until we get a
+                // connection then we return the stream.
+                "--host" => {
+                    let listener = TcpListener::bind("0.0.0.0:1337").unwrap();
+                    (listener.incoming().next().unwrap().unwrap(), false)
+                }
+                // If the program is running as a client we connect to the specified IP address and
+                // return the stream.
+                "--client" => {
+                    let ip = args.next().expect("Expected ip address after --client");
+                    let stream = TcpStream::connect(ip).expect("Failed to connect to host");
+                    (stream, true)
+                }
+                // Only --host and --client are valid arguments
+                _ => panic!("Unknown command: {}", host_or_client),
+            }
+        };
+        // Set TcpStream to non blocking so that we can do networking in the update thread
+        stream
+            .set_nonblocking(true)
+            .expect("Failed to set stream to non blocking");
+
+        Ok(MainState {
+            board: create_game(),
+            cur_selected_xy: SelectedXY::None,
+            assets: assets,
+            state: if client {
+                    State::WaitingForOpponent
+                } else {
+                    State::Playing
+                },
+            stream: stream,
+            client: client,
+
+        })
     }
+
+
+    // /// Checks if a move packet is available in returns the new positions otherwise it returns none
+    // fn recieve_move_packet(&mut self) -> Option<networking::Move> {
+    //     let mut buf: [u8; 512] = [0_u8; 512];
+    //     match self.stream.read(&mut buf) {
+    //         Ok(_) => ,
+    //         Err(e) => match e.kind() {
+    //             std::io::ErrorKind::WouldBlock => None,
+    //             _ => panic!("Error: {}", e),
+    //         },
+    //     }
+    // }
+    fn send_move_packet(&mut self, from: (usize, usize), to: (usize, usize), promotion: Option<networking::Piece>) {
+        let m = networking::Move {
+            from_square: self.xy_to_square(from),
+            to_square: self.xy_to_square(to),
+            promotion: Some(promotion.unwrap() as i32),
+        };
+        
+
+        // let mut buf: [u8; 512] = [0_u8; 512];
+        let packet = m.encode_to_vec();
+        self.stream.write(&packet);
+    }
+
+    fn recieve_packet_s2c(&mut self) {
+        let mut buf: [u8; 512] = [0_u8; 512];
+        let buf_len = self.stream.read(&mut buf).unwrap();
+
+        let raw_msg = networking::S2cMessage::decode(&buf[..buf_len]).expect("read went wrong");
+        match raw_msg.msg {
+            None => (),
+            Some(msg) => {
+                match msg {
+                    s2c_message::Msg::Move(msg_m) => {
+                        let from = self.square_to_xy(msg_m.from_square);
+                        let to = self.square_to_xy(msg_m.to_square);
+                        let promotion = msg_m.promotion;
+
+                        match self.board.get_destinations(from) {
+                            Destinations::Exists(d) => {
+                                if d.contains(&to) {
+                                    self.board.move_from_to(from, to);
+                                } else {
+                                    self.bad_move_s2c();
+                                }
+                            },
+                            Destinations::None => {
+                                self.bad_move_s2c();
+                            }
+                        }
+                    },
+                    s2c_message::Msg::ConnectAck(msg_m) => {
+                        println!("got cennect ack")
+                    },
+                    s2c_message::Msg::MoveAck(msg_m) => {
+                        println!("got move ack")
+                    },
+                    
+                }
+            }
+        }
+        
+    }
+    fn bad_move_s2c(&self) {
+        println!("client tried bad move");
+        let ack = networking::S2cMoveAck {
+            legal: false,
+            board_result: Some(networking::BoardState {
+                fen_string: "hej".to_string(),
+            }),
+        };
+    }
+
+    pub fn square_to_xy(&self, s: u32) -> (usize, usize) {
+        let y = (s as f32 / 8.0).floor() as usize;
+        let x = (s % 8) as usize;
+        (x, y)
+    }
+    pub fn xy_to_square(&self, xy: (usize, usize)) -> u32 {
+        (xy.0+xy.0*8) as u32
+    }
+    // fn send_move_packet_C2s() {
+    //     let mut buf: [u8; 512] = [0_u8; 512];
+
+    // }
+    // fn recieve_packet_s2C() {
+    //     let mut buf: [u8; 512] = [0_u8; 512];
+
+    // }
+    // fn recieve_packet_C2s() {
+    //     let mut buf: [u8; 512] = [0_u8; 512];
+        
+    // }
+
+    // fn recieve_packet() {
+    //     let mut buf: [u8; 512] = [0_u8; 512];
+    //     let n = self.stream.read(&mut buf).expect("could not read stream.");
+    //     let packet =
+        
+        
+    // }
+    fn send_move_packet_C2s() {
+        let mut buf: [u8; 512] = [0_u8; 512];
+
+    }
+
+    // fn connect(&self) {
+    //     let mut buf: [u8; 512] = [0_u8; 512];
+    //     let n = self.stream.read(&mut buf).expect("could not read stream.");
+
+    //     let packet = networking:
+    // }
+
+
+    // /// Sends a move packet of the current position and sets the state to waiting
+    // fn send_move_packet(&mut self, move_to_send: networking::Move) {
+    //     let mut buf: [u8; 512] = [0_u8; 512];
+    //     prost::Message::encode(&self, buf)
+    //     self.stream
+    //         .write(&mut buf)
+    //         .expect("Failed to send move packet");
+    //     self.state = State::WaitingForOpponent;
+    // }
+
 }
 
 struct Assets {
@@ -52,7 +274,7 @@ struct Assets {
     w_king_img: graphics::Image,
 }
 impl Assets {
-    fn get_image(&self, p: &Piece) -> &graphics::Image {
+    fn get_image(&self, p: &chess_lib::Piece) -> &graphics::Image {
         match p.color {
             Color::Black => {
                 match p.piece_type {
@@ -80,7 +302,26 @@ impl Assets {
 
 impl event::EventHandler<ggez::GameError> for MainState {
     fn update(&mut self, _ctx: &mut Context) -> GameResult {
-        // self.pos_x = self.pos_x % 800.0 + 1.0;
+
+        // NETWORKING
+        // match self.state {
+        //     State::Playing => {}
+        //     State::WaitingForOpponent => {
+        //         // If we recieved at move packet we first set the enemy pos to the recieved
+        //         // position and then set the state to playing
+        //         if let Some(pos) = self.recieve_move_packet() {
+        //             self.state = State::Playing;
+        //             // self.enemy_pos = pos;
+        //         }
+        //     }
+        // }
+        // ! NETWORKING
+
+
+
+
+
+
         let mpos = _ctx.mouse.position();
         let mx = mpos.x;
         let my = mpos.y;
@@ -111,6 +352,14 @@ impl event::EventHandler<ggez::GameError> for MainState {
                                         self.board.move_from_to(cur_sel_xy, new_sel_xy);
                                         // OBS HAS TO RESET SELCT
                                         self.cur_selected_xy = SelectedXY::None;
+
+                                        // SEND MOVE NETWORKING
+                                        // let move_to_send = networking::Move {
+                                        //     from_square: (cur_sel_xy.1*8 + cur_sel_xy.0) as u32,
+                                        //     to_square: (new_sel_xy.1*8 + new_sel_xy.0) as u32,
+                                        //     promotion: None,
+                                        // };
+                                        // self.send_move_packet(move_to_send);
                                     }
                                 },
                                 // CANT MOVE
@@ -139,6 +388,15 @@ impl event::EventHandler<ggez::GameError> for MainState {
                                             self.board.move_from_to(cur_sel_xy, new_sel_xy);
                                             // OBS RESET SELECT
                                             self.cur_selected_xy = SelectedXY::None;
+
+                                            // SEND MOVE NETWORKING
+                                            // let move_to_send = networking::Move {
+                                            //     from_square: (cur_sel_xy.1*8 + cur_sel_xy.0) as u32,
+                                            //     to_square: (new_sel_xy.1*8 + new_sel_xy.0) as u32,
+                                            //     promotion: None,
+                                            // };
+                                            // self.send_move_packet(move_to_send);
+
                                         } else {
                                             println!("attempted illigal move")
                                         }
@@ -256,7 +514,6 @@ impl event::EventHandler<ggez::GameError> for MainState {
                 
 
                 // DRAWING PIECE
-
                 let square = self.board.get_square_xy((_x, _y));
                 let scale_xy = (WIDTH*0.125)/75.0;
                 let drawparams = graphics::DrawParam::new()
@@ -304,32 +561,7 @@ pub fn main() -> GameResult {
     .window_mode(ggez::conf::WindowMode::default().dimensions(WIDTH, HEIGHT))
     .build()?;
 
-    // SETTING UP ASSETS
-    let scale_xy_board = WIDTH/1168.0;
-    let mut assets = Assets {
-        board_img: graphics::Image::from_path(&ctx, "/board.png", true)?,
-        board_drawparam: graphics::DrawParam::new()
-        .dest([0.0, 0.0])
-        .rotation(0.0)
-        .offset([0.0, 0.0])
-        .scale([scale_xy_board, scale_xy_board]),
-        b_pawn_img: graphics::Image::from_path(&ctx, "/b_pawn.png", true)?,
-        b_rook_img: graphics::Image::from_path(&ctx, "/b_rook.png", true)?,
-        b_knight_img: graphics::Image::from_path(&ctx, "/b_knight.png", true)?,
-        b_bishop_img: graphics::Image::from_path(&ctx, "/b_bishop.png", true)?,
-        b_queen_img: graphics::Image::from_path(&ctx, "/b_queen.png", true)?,
-        b_king_img: graphics::Image::from_path(&ctx, "/b_king.png", true)?,
-        w_pawn_img: graphics::Image::from_path(&ctx, "/w_pawn.png", true)?,
-        w_rook_img: graphics::Image::from_path(&ctx, "/w_rook.png", true)?,
-        w_knight_img: graphics::Image::from_path(&ctx, "/w_knight.png", true)?,
-        w_bishop_img: graphics::Image::from_path(&ctx, "/w_bishop.png", true)?,
-        w_queen_img: graphics::Image::from_path(&ctx, "/w_queen.png", true)?,
-        w_king_img: graphics::Image::from_path(&ctx, "/w_king.png", true)?,
-        
-    };
-    // ! SETTING UP ASSETS
-
-    let state = MainState::new(&mut ctx, assets)?;
+    let state = MainState::new(&mut ctx)?;
     event::run(ctx, event_loop, state)
 }
 

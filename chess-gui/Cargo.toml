@@ -9,3 +9,5 @@ edition = "2021"
 chess_lib = { git = "https://github.com/INDA22PlusPlus/smonten-chess/" }
 ggez = "0.8.0-rc0"
 glam = { version = "0.20", features = ["mint"] }
+prost = "0.11.0"
+tokio = "1.21.2"
