@@ -54,6 +54,7 @@ struct MainState {
     // Networking
     stream: TcpStream,
     role: Role,
+    connected: bool,
 }
 
 impl MainState {
@@ -63,10 +64,10 @@ impl MainState {
         let mut assets = Assets {
             board_img: graphics::Image::from_path(ctx, "/board.png")?,
             board_drawparam: graphics::DrawParam::new()
-            .dest([0.0, 0.0])
-            .rotation(0.0)
-            .offset([0.0, 0.0])
-            .scale([scale_xy_board, scale_xy_board]),
+                .dest([0.0, 0.0])
+                .rotation(0.0)
+                .offset([0.0, 0.0])
+                .scale([scale_xy_board, scale_xy_board]),
             b_pawn_img: graphics::Image::from_path(ctx, "/b_pawn.png")?,
             b_rook_img: graphics::Image::from_path(ctx, "/b_rook.png")?,
             b_knight_img: graphics::Image::from_path(ctx, "/b_knight.png")?,
@@ -129,6 +130,7 @@ impl MainState {
                 true => Role::Client,
                 false => Role::Server,
             },
+            connected: false
 
         })
     }
@@ -147,19 +149,54 @@ impl MainState {
         }
     }
 
+    fn send_connect_request_c2s(&mut self) {
+        let cr = networking::C2sConnectRequest {
+            game_id: 1,
+            spectate: false,
+        };
+        let cr_packet = cr.encode_to_vec();
+        self.stream.write(&cr_packet);
+    }
 
-    // /// Checks if a move packet is available in returns the new positions otherwise it returns none
-    // fn recieve_move_packet(&mut self) -> Option<networking::Move> {
-    //     let mut buf: [u8; 512] = [0_u8; 512];
-    //     match self.stream.read(&mut buf) {
-    //         Ok(_) => ,
-    //         Err(e) => match e.kind() {
-    //             std::io::ErrorKind::WouldBlock => None,
-    //             _ => panic!("Error: {}", e),
-    //         },
-    //     }
-    // }
-    fn send_move_packet_c2s(&mut self, from: (usize, usize), to: (usize, usize), promotion: Option<networking::Piece>) {
+    fn check_connect_request_s2c(&mut self) {
+        let mut buf: [u8; 512] = [0_u8; 512];
+        let buf_len = match self.stream.read(&mut buf) {
+            Ok(l) => l,
+            Err(e) => 0,
+        };
+        let raw_msg = networking::C2sMessage::decode(&buf[..buf_len]).expect("read went wrong");
+        match raw_msg.msg {
+            None => (),
+            Some(msg) => {
+                match msg {
+                    networking::c2s_message::Msg::ConnectRequest(msg_cr) => {
+                        let id = msg_cr.game_id;
+                        let spectate = msg_cr.spectate;
+
+                        // CONNECTION SECURE!
+                        let ca = networking::S2cConnectAck {
+                            success: true,
+                            game_id: Some(1),
+                            starting_position: Some(networking::BoardState {fen_string: self.board.get_fen()}),
+                            client_is_white: Some(false),
+                        };
+                        let ca_packet = ca.encode_to_vec();
+                        self.stream.write(&ca_packet);
+                        // ! CONNECTION SECURE!
+                    },
+                    _ => (),
+                }
+            }
+        }
+
+    }
+
+    fn send_move_packet_c2s(&mut self, mut from: (usize, usize), mut to: (usize, usize), promotion: Option<networking::Piece>) {
+        // FLIP Y, FOLLOW THE PROTOCOL
+        from.1 = 7-from.1;
+        to.1 = 7-to.1;
+        // ! FLIP Y, FOLLOW THE PROTOCOL
+
         let prom_to_send = match promotion {
             None => {
                 None
@@ -184,7 +221,12 @@ impl MainState {
         self.stream.write(&packet);
     }
 
-    fn send_move_packet_s2c(&mut self, from: (usize, usize), to: (usize, usize), promotion: Option<networking::Piece>) {
+    fn send_move_packet_s2c(&mut self, mut from: (usize, usize), mut to: (usize, usize), promotion: Option<networking::Piece>) {
+        // FLIP Y, FOLLOW THE PROTOCOL
+        from.1 = 7-from.1;
+        to.1 = 7-to.1;
+        // ! FLIP Y, FOLLOW THE PROTOCOL
+
         let prom_to_send = match promotion {
             None => {
                 None
@@ -223,9 +265,14 @@ impl MainState {
             Some(msg) => {
                 match msg {
                     networking::c2s_message::Msg::Move(msg_m) => {
-                        let from = self.square_to_xy(msg_m.from_square);
-                        let to = self.square_to_xy(msg_m.to_square);
+                        let mut from = self.square_to_xy(msg_m.from_square);
+                        let mut to = self.square_to_xy(msg_m.to_square);
                         let promotion = msg_m.promotion;
+
+                        // FLIP Y, FOLLOW THE PROTOCOL
+                        from.1 = 7-from.1;
+                        to.1 = 7-to.1;
+                        // ! FLIP Y, FOLLOW THE PROTOCOL
 
                         match self.board.get_destinations(from) {
                             Destinations::None => {
@@ -269,15 +316,17 @@ impl MainState {
             Some(msg) => {
                 match msg {
                     s2c_message::Msg::Move(msg_m) => {
-                        println!("receving move from server now");
-                        let from = self.square_to_xy(msg_m.from_square);
-                        let to = self.square_to_xy(msg_m.to_square);
+                        let mut from = self.square_to_xy(msg_m.from_square);
+                        let mut to = self.square_to_xy(msg_m.to_square);
                         let promotion = msg_m.promotion;
 
-                        println!("now moving from square {} to {}", msg_m.from_square, msg_m.to_square);
-                        println!("now moving from {:?} to {:?}", from, to);
+                        // FLIP Y, FOLLOW THE PROTOCOL
+                        from.1 = 7-from.1;
+                        to.1 = 7-to.1;
+                        // ! FLIP Y, FOLLOW THE PROTOCOL
+
+
                         self.board.move_from_to(from, to);
-                        println!("move done");
 
                         // UPDATING STATE
                         self.state = State::Playing;
