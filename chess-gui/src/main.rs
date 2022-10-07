@@ -184,6 +184,31 @@ impl MainState {
         self.stream.write(&packet);
     }
 
+    fn send_move_packet_s2c(&mut self, from: (usize, usize), to: (usize, usize), promotion: Option<networking::Piece>) {
+        let prom_to_send = match promotion {
+            None => {
+                None
+            },
+            Some(p) => {
+                Some(p as i32)
+            }
+        };
+        let m = networking::Move {
+            from_square: self.xy_to_square(from),
+            to_square: self.xy_to_square(to),
+            promotion: prom_to_send,
+        };
+
+        let msg = networking::S2cMessage {
+            msg: Some(s2c_message::Msg::Move(m)),
+        };
+        
+
+        // let mut buf: [u8; 512] = [0_u8; 512];
+        let packet = msg.encode_to_vec();
+        self.stream.write(&packet);
+    }
+
     // server receving packet
     fn recieve_packet_c2s(&mut self) {
         let mut buf: [u8; 512] = [0_u8; 512];
@@ -210,6 +235,7 @@ impl MainState {
                                 if d.contains(&to) {
                                     println!("server performing clients move");
                                     self.board.move_from_to(from, to);
+                                    self.ok_move_s2c();
 
                                     // UPDATING STATE
                                     self.state = State::Playing;
@@ -280,7 +306,17 @@ impl MainState {
         let ack = networking::S2cMoveAck {
             legal: false,
             board_result: Some(networking::BoardState {
-                fen_string: "hej".to_string(),
+                fen_string: self.board.get_fen(),
+            }),
+        };
+    }
+
+    fn ok_move_s2c(&self) {
+        println!("client tried bad move");
+        let ack = networking::S2cMoveAck {
+            legal: true,
+            board_result: Some(networking::BoardState {
+                fen_string: self.board.get_fen(),
             }),
         };
     }
@@ -359,16 +395,9 @@ impl MainState {
                                 // CAN WE EVEN MOVE THE PIECE HERE?
                                 Destinations::Exists(d) => {
                                     if d.contains(&new_sel_xy) {
-                                        println!("to empty from playable piece, legal move. Shuld move!");
+                                        println!("moving to empty square");
                                         // THEN WE CAN MAKE OUR MOVE
-                                        self.board.move_from_to(cur_sel_xy, new_sel_xy);
-                                        // OBS HAS TO RESET SELCT
-                                        self.cur_selected_xy = SelectedXY::None;
-
-                                        // SEND MOVE NETWORKING
-                                        self.send_move_packet_c2s(cur_sel_xy, new_sel_xy, None);
-                                        // UPDATE STATE
-                                        self.state = State::WaitingForOpponent;
+                                        self.make_move(cur_sel_xy, new_sel_xy);
                                     }
                                 },
                                 // CANT MOVE
@@ -394,15 +423,7 @@ impl MainState {
                                         if dests.contains(&new_sel_xy) {
                                             // SELECTED PIECE OF DIFFERENT COLOR -> KILL!
                                             println!("kill!");
-                                            self.board.move_from_to(cur_sel_xy, new_sel_xy);
-                                            // OBS RESET SELECT
-                                            self.cur_selected_xy = SelectedXY::None;
-
-                                            // SEND MOVE NETWORKING
-                                            self.send_move_packet_c2s(cur_sel_xy, new_sel_xy, None);
-                                            // UPDATE STATE
-                                            self.state = State::WaitingForOpponent;
-
+                                            self.make_move(cur_sel_xy, new_sel_xy);
                                         } else {
                                             println!("attempted illigal move")
                                         }
@@ -422,6 +443,28 @@ impl MainState {
             }
         }
     
+    }
+
+    fn make_move(&mut self, from: (usize, usize), to: (usize, usize)) {
+        // THE MOVE
+        match self.role {
+            Role::Server => {
+                self.board.move_from_to(from, to);
+                self.send_move_packet_s2c(from, to, None);
+            },
+            Role::Client => {
+                self.board.move_from_to(from, to);
+                // SEND MOVE NETWORKING
+                self.send_move_packet_c2s(from, to, None);
+            }
+        }
+        // ! THE MOVE
+
+        // OBS RESET SELECT
+        self.cur_selected_xy = SelectedXY::None;
+        // UPDATE STATE
+        self.state = State::WaitingForOpponent;
+
     }
 
 }
