@@ -55,6 +55,7 @@ struct MainState {
     stream: TcpStream,
     role: Role,
     connected: bool,
+    expecting_move_ack: bool
 }
 
 impl MainState {
@@ -130,7 +131,8 @@ impl MainState {
                 true => Role::Client,
                 false => Role::Server,
             },
-            connected: false
+            connected: false,
+            expecting_move_ack: false,
 
         })
     }
@@ -150,15 +152,47 @@ impl MainState {
     }
 
     fn send_connect_request_c2s(&mut self) {
+        println!("sending connect request to server");
         let cr = networking::C2sConnectRequest {
             game_id: 1,
             spectate: false,
         };
-        let cr_packet = cr.encode_to_vec();
-        self.stream.write(&cr_packet);
+        let msg = networking::C2sMessage {
+            msg: Some(networking::c2s_message::Msg::ConnectRequest(cr)),
+        };
+        let packet = msg.encode_to_vec();
+        self.stream.write(&packet);
     }
 
-    fn check_connect_request_s2c(&mut self) {
+    fn expect_connect_ack_c2s(&mut self) {
+        println!("expecting connect ack from server");
+        let mut buf: [u8; 512] = [0_u8; 512];
+        let buf_len = match self.stream.read(&mut buf) {
+            Ok(l) => l,
+            Err(e) => 0,
+        };
+        let raw_msg = networking::S2cMessage::decode(&buf[..buf_len]).expect("read went wrong");
+        match raw_msg.msg {
+            None => (),
+            Some(msg) => {
+                match msg {
+                    networking::s2c_message::Msg::ConnectAck(msg_ca) => {
+                        let success = msg_ca.success;
+                        if success {
+                            // CONNECTION SECURE!
+                            println!("connected to server! :)");
+                            self.connected = true;
+                            // ! CONNECTION SECURE!
+                        }
+                    },
+                    _ => (),
+                }
+            }
+        }
+    }
+
+    fn expect_connect_request_s2c(&mut self) {
+        println!("expecting connect request from client");
         let mut buf: [u8; 512] = [0_u8; 512];
         let buf_len = match self.stream.read(&mut buf) {
             Ok(l) => l,
@@ -174,14 +208,19 @@ impl MainState {
                         let spectate = msg_cr.spectate;
 
                         // CONNECTION SECURE!
+                        println!("connected to client! :)");
+                        self.connected = true;
                         let ca = networking::S2cConnectAck {
                             success: true,
                             game_id: Some(1),
                             starting_position: Some(networking::BoardState {fen_string: self.board.get_fen()}),
                             client_is_white: Some(false),
                         };
-                        let ca_packet = ca.encode_to_vec();
-                        self.stream.write(&ca_packet);
+                        let msg = networking::S2cMessage {
+                            msg: Some(networking::s2c_message::Msg::ConnectAck(ca)),
+                        };
+                        let packet = msg.encode_to_vec();
+                        self.stream.write(&packet);
                         // ! CONNECTION SECURE!
                     },
                     _ => (),
@@ -189,6 +228,37 @@ impl MainState {
             }
         }
 
+    }
+
+    fn expect_move_ack_c2s(&mut self) {
+        println!("expecting move ack from server");
+        let mut buf: [u8; 512] = [0_u8; 512];
+        let buf_len = match self.stream.read(&mut buf) {
+            Ok(l) => l,
+            Err(e) => 0,
+        };
+        let raw_msg = networking::S2cMessage::decode(&buf[..buf_len]).expect("read went wrong");
+        match raw_msg.msg {
+            None => (),
+            Some(msg) => {
+                match msg {
+                    networking::s2c_message::Msg::MoveAck(msg_ma) => {
+                        let legal = msg_ma.legal;
+                        let board_result = msg_ma.board_result;
+
+                        if legal {
+                            println!("move ok :)");
+                            // update board
+                            println!("must read fen_string!");
+                            self.state = State::WaitingForOpponent;
+                        } else {
+                            println!("illigal move, try again");
+                        }
+                    },
+                    _ => (),
+                }
+            }
+        }
     }
 
     fn send_move_packet_c2s(&mut self, mut from: (usize, usize), mut to: (usize, usize), promotion: Option<networking::Piece>) {
@@ -505,6 +575,7 @@ impl MainState {
                 self.board.move_from_to(from, to);
                 // SEND MOVE NETWORKING
                 self.send_move_packet_c2s(from, to, None);
+                // self.expecting_move_ack = true;
             }
         }
         // ! THE MOVE
@@ -565,28 +636,62 @@ impl event::EventHandler<ggez::GameError> for MainState {
     fn update(&mut self, _ctx: &mut Context) -> GameResult {
 
         // NETWORKING
-        match self.state {
-            State::Playing => {
-                self.update_mouse_select(_ctx);
-            },
-            State::WaitingForOpponent => {
-                // If we recieved at move packet we first set the enemy pos to the recieved
-                // position and then set the state to playing
-                
-                match self.role {
-                    Role::Client => {
-                        self.recieve_packet_s2c();
-                    },
-                    Role::Server => {
-                        self.recieve_packet_c2s();
+        if !self.connected {
+            match self.role {
+                Role::Client => {
+                    self.send_connect_request_c2s();
+                    self.expect_connect_ack_c2s();
+                    // match self.state {
+                    //     State::Playing => {
+                    //         self.send_connect_request_c2s();
+                    //         self.expect_connect_ack_c2s();
+                    //         self.state = State::WaitingForOpponent;
+                    //     },
+                    //     _ => (),
+                    // }
+                    // self.connected = true;
+                }, 
+                Role::Server => {
+                    self.expect_connect_request_s2c();
+                    // match self.state {
+                    //     State::Playing => {
+                    //         self.expect_connect_request_s2c();
+                    //     },
+                    //     _ => (),
+                    // }
+                    // self.connected = true;
+                },
+            }
+        } else if self.expecting_move_ack {
+            match self.role {
+                Role::Client => {
+                    self.expect_move_ack_c2s();
+                },
+                Role::Server => {
+                    panic!("Server should not expect move ack");
+                }
+            }
+        } else {
+            if self.expecting_move_ack {
+                self.expect_move_ack_c2s();
+            }
+            match self.state {
+                State::Playing => {
+                    self.update_mouse_select(_ctx);
+                },
+                State::WaitingForOpponent => {
+                    // If we recieved at move packet we first set the enemy pos to the recieved
+                    // position and then set the state to playing
+                    
+                    match self.role {
+                        Role::Client => {
+                            self.recieve_packet_s2c();
+                        },
+                        Role::Server => {
+                            self.recieve_packet_c2s();
+                        }
                     }
                 }
-                
-
-                // if let Some(pos) = self.recieve_move_packet() {
-                //     self.state = State::Playing;
-                //     // self.enemy_pos = pos;
-                // }
             }
         }
         // ! NETWORKING
